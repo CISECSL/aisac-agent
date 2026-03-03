@@ -453,7 +453,9 @@ func (a *Agent) register() error {
 	}
 
 	// Wait for response
-	a.conn.SetReadDeadline(time.Now().Add(a.cfg.Server.ReadTimeout))
+	if err := a.conn.SetReadDeadline(time.Now().Add(a.cfg.Server.ReadTimeout)); err != nil {
+		return fmt.Errorf("setting read deadline: %w", err)
+	}
 	_, data, err := a.conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("reading register response: %w", err)
@@ -484,7 +486,9 @@ func (a *Agent) messageLoop() error {
 		default:
 		}
 
-		a.conn.SetReadDeadline(time.Now().Add(a.cfg.Server.ReadTimeout))
+		if err := a.conn.SetReadDeadline(time.Now().Add(a.cfg.Server.ReadTimeout)); err != nil {
+			return fmt.Errorf("setting read deadline: %w", err)
+		}
 		_, data, err := a.conn.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("reading message: %w", err)
@@ -732,7 +736,9 @@ func (a *Agent) sendMessage(msg *protocol.Message) error {
 		return fmt.Errorf("not connected")
 	}
 
-	a.conn.SetWriteDeadline(time.Now().Add(a.cfg.Server.WriteTimeout))
+	if err := a.conn.SetWriteDeadline(time.Now().Add(a.cfg.Server.WriteTimeout)); err != nil {
+		return fmt.Errorf("setting write deadline: %w", err)
+	}
 	return a.conn.WriteJSON(msg)
 }
 

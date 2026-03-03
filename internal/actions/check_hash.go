@@ -275,7 +275,7 @@ func (a *CheckHashAction) searchLocalFiles(ctx context.Context, targetHash, hash
 			break
 		}
 
-		filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error { //nolint:errcheck // walk errors are handled inside callback
 			// Check context for cancellation
 			select {
 			case <-ctx.Done():
