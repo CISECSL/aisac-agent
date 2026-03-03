@@ -20,9 +20,20 @@ type AgentConfig struct {
 	Callback     CallbackSettings     `yaml:"callback"`
 	Collector    collector.Config     `yaml:"collector"`
 	Heartbeat    heartbeat.Config     `yaml:"heartbeat"`
+	Registration RegistrationSettings `yaml:"registration"`
 	Logging      LoggingSettings      `yaml:"logging"`
 	ControlPlane ControlPlaneSettings `yaml:"control_plane"`
 	Safety       SafetySettings       `yaml:"safety"`
+}
+
+// RegistrationSettings contains platform registration configuration.
+type RegistrationSettings struct {
+	Enabled            bool   `yaml:"enabled"`
+	URL                string `yaml:"url"`
+	APIKey             string `yaml:"api_key"`
+	AssetID            string `yaml:"asset_id"`
+	CommandServerURL   string `yaml:"command_server_url"`
+	CommandServerToken string `yaml:"command_server_token"`
 }
 
 // AgentSettings contains agent-specific settings.
@@ -36,11 +47,11 @@ type AgentSettings struct {
 
 // ServerSettings contains server connection settings.
 type ServerSettings struct {
-	Enabled         bool          `yaml:"enabled"`
-	URL             string        `yaml:"url"`
-	ConnectTimeout  time.Duration `yaml:"connect_timeout"`
-	WriteTimeout    time.Duration `yaml:"write_timeout"`
-	ReadTimeout     time.Duration `yaml:"read_timeout"`
+	Enabled        bool          `yaml:"enabled"`
+	URL            string        `yaml:"url"`
+	ConnectTimeout time.Duration `yaml:"connect_timeout"`
+	WriteTimeout   time.Duration `yaml:"write_timeout"`
+	ReadTimeout    time.Duration `yaml:"read_timeout"`
 }
 
 // TLSSettings contains mTLS configuration.
@@ -54,9 +65,9 @@ type TLSSettings struct {
 
 // ActionsSettings contains action execution settings.
 type ActionsSettings struct {
-	Enabled       []string               `yaml:"enabled"`
-	RateLimits    map[string]RateLimit   `yaml:"rate_limits"`
-	DefaultTimeout time.Duration         `yaml:"default_timeout"`
+	Enabled        []string             `yaml:"enabled"`
+	RateLimits     map[string]RateLimit `yaml:"rate_limits"`
+	DefaultTimeout time.Duration        `yaml:"default_timeout"`
 }
 
 // RateLimit defines rate limiting for an action.
@@ -67,10 +78,10 @@ type RateLimit struct {
 
 // LoggingSettings contains logging configuration.
 type LoggingSettings struct {
-	Level      string `yaml:"level"`
-	Format     string `yaml:"format"`
-	Output     string `yaml:"output"`
-	File       string `yaml:"file"`
+	Level  string `yaml:"level"`
+	Format string `yaml:"format"`
+	Output string `yaml:"output"`
+	File   string `yaml:"file"`
 }
 
 // CallbackSettings contains SOAR callback configuration.
@@ -154,6 +165,9 @@ func DefaultAgentConfig() *AgentConfig {
 		},
 		Collector: *collector.DefaultConfig(),
 		Heartbeat: heartbeat.DefaultConfig(),
+		Registration: RegistrationSettings{
+			Enabled: false,
+		},
 		Logging: LoggingSettings{
 			Level:  "info",
 			Format: "json",
@@ -244,6 +258,17 @@ func (c *AgentConfig) applyEnvOverrides() {
 	}
 	if heartbeatURL := os.Getenv("AISAC_HEARTBEAT_URL"); heartbeatURL != "" {
 		c.Heartbeat.URL = heartbeatURL
+	}
+
+	// Registration environment overrides
+	if regURL := os.Getenv("AISAC_REGISTER_URL"); regURL != "" {
+		c.Registration.URL = regURL
+	}
+	if csURL := os.Getenv("AISAC_CS_URL"); csURL != "" {
+		c.Registration.CommandServerURL = csURL
+	}
+	if csToken := os.Getenv("AISAC_CS_TOKEN"); csToken != "" {
+		c.Registration.CommandServerToken = csToken
 	}
 }
 

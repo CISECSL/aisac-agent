@@ -19,7 +19,7 @@ type Config struct {
 // SourceConfig defines a log source to collect.
 type SourceConfig struct {
 	Name   string            `yaml:"name"`
-	Type   string            `yaml:"type"`   // "json_file", "file"
+	Type   string            `yaml:"type"` // "json_file", "file"
 	Path   string            `yaml:"path"`
 	Parser string            `yaml:"parser"` // "suricata_eve", "syslog", "json", "wazuh_alerts"
 	Tags   []string          `yaml:"tags"`   // Tags to add to events from this source
@@ -50,9 +50,9 @@ type BatchConfig struct {
 
 // FileConfig defines file handling behavior.
 type FileConfig struct {
-	StartPosition string `yaml:"start_position"` // "beginning" or "end"
-	SinceDBPath   string `yaml:"sincedb_path"`   // Path to store file positions
-	PollInterval  time.Duration `yaml:"poll_interval"` // How often to check for new data
+	StartPosition string        `yaml:"start_position"` // "beginning" or "end"
+	SinceDBPath   string        `yaml:"sincedb_path"`   // Path to store file positions
+	PollInterval  time.Duration `yaml:"poll_interval"`  // How often to check for new data
 }
 
 // DefaultConfig returns default collector configuration.
