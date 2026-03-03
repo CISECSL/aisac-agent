@@ -31,6 +31,7 @@ type OutputConfig struct {
 	Type          string        `yaml:"type"` // "http" or "opensearch"
 	URL           string        `yaml:"url"`
 	APIKey        string        `yaml:"api_key"`
+	AuthToken     string        `yaml:"auth_token"`     // JWT token for Supabase gateway auth
 	AssetID       string        `yaml:"asset_id"`       // Asset ID for AISAC platform
 	Username      string        `yaml:"username"`       // For OpenSearch basic auth
 	Password      string        `yaml:"password"`       // For OpenSearch basic auth

@@ -223,8 +223,10 @@ func (o *HTTPOutput) doRequest(ctx context.Context, data []byte) error {
 	req.Header.Set("User-Agent", "AISAC-Collector/1.0")
 
 	if o.cfg.APIKey != "" {
-		// Use X-API-Key header as expected by AISAC platform
 		req.Header.Set("X-API-Key", o.cfg.APIKey)
+	}
+	if o.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+o.cfg.AuthToken)
 	}
 
 	if DebugCollector {
