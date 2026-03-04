@@ -181,11 +181,11 @@ func (o *HTTPOutput) preparePayload(events []*LogEvent) ([]byte, error) {
 	// Convert each LogEvent to a JSON string (API expects array of strings)
 	messages := make([]string, 0, len(events))
 	for _, event := range events {
-		eventJSON, err := json.Marshal(event)
+		msg, err := o.marshalEvent(event)
 		if err != nil {
 			return nil, fmt.Errorf("marshaling event: %w", err)
 		}
-		messages = append(messages, string(eventJSON))
+		messages = append(messages, msg)
 	}
 
 	payload := IngestPayload{
@@ -194,6 +194,29 @@ func (o *HTTPOutput) preparePayload(events []*LogEvent) ([]byte, error) {
 	}
 
 	return json.Marshal(payload)
+}
+
+// marshalEvent serializes a LogEvent for the ingest API.
+// For Wazuh alerts, it sends the raw alert JSON prefixed with "wazuh: " so that
+// syslog-ingest detects the source as Wazuh and uses normalizeWazuhAlert for
+// proper severity mapping (Wazuh level 0-15 → AISAC severity).
+// The raw JSON preserves "agent.name" at the top level for asset routing.
+// For other event types, it serializes the LogEvent struct as-is.
+func (o *HTTPOutput) marshalEvent(event *LogEvent) (string, error) {
+	if event.Source == "wazuh_alerts" && event.Raw != "" {
+		// Prefix with "wazuh:" so syslog-ingest detects the source correctly.
+		// syslog-ingest's parseSyslogMessage checks rawMessage.includes('wazuh:')
+		// and then tryExtractWazuhData Pattern 4 parses the embedded JSON to
+		// extract rule.id, rule.level for proper severity mapping.
+		return "wazuh: " + event.Raw, nil
+	}
+
+	// Default: serialize the LogEvent struct
+	b, err := json.Marshal(event)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // compress compresses the payload using gzip.

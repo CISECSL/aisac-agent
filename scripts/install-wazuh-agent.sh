@@ -228,6 +228,35 @@ main() {
     # 4. Install Wazuh Agent
     install_wazuh_agent "$manager_ip" "${manager_port:-1514}" "$agent_group" "$asset_name"
 
+    # 5. Extract Wazuh agent ID and save to register JSON for install-aisac-agent.sh
+    local wazuh_agent_id=""
+    if [ -f /var/ossec/etc/client.keys ]; then
+        wazuh_agent_id=$(awk '{print $1; exit}' /var/ossec/etc/client.keys 2>/dev/null || echo "")
+    fi
+
+    # Inject wazuh metadata into the register JSON
+    if command -v jq &>/dev/null; then
+        local tmp_json
+        tmp_json=$(jq \
+            --arg name "$asset_name" \
+            --arg id "$wazuh_agent_id" \
+            '.wazuh.agent_name = $name | .wazuh.agent_id = $id' \
+            "$REGISTER_OUTPUT")
+        echo "$tmp_json" > "$REGISTER_OUTPUT"
+    elif command -v python3 &>/dev/null; then
+        python3 -c "
+import json
+with open('$REGISTER_OUTPUT') as f:
+    data = json.load(f)
+data.setdefault('wazuh', {})['agent_name'] = '$asset_name'
+data.setdefault('wazuh', {})['agent_id'] = '$wazuh_agent_id'
+with open('$REGISTER_OUTPUT', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+    fi
+
+    log_info "  Wazuh Agent Name: ${asset_name}"
+    log_info "  Wazuh Agent ID:   ${wazuh_agent_id:-unknown}"
     log_success "Wazuh Agent installed → Manager: ${manager_ip} | Group: ${agent_group}"
 }
 

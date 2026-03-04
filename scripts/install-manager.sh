@@ -57,17 +57,19 @@ print_banner() {
 }
 
 usage() {
-    echo "Usage: $0 -k <API_KEY> -t <AUTH_TOKEN> [-u <REGISTER_URL>]"
+    echo "Usage: $0 -k <API_KEY> -t <AUTH_TOKEN> [-u <REGISTER_URL>] [-i] [--no-indexer]"
     echo ""
     echo "Options:"
     echo "  -k <API_KEY>       AISAC Platform API Key for the collector asset"
     echo "  -t <AUTH_TOKEN>    Supabase anon key (JWT) for gateway auth"
     echo "  -u <REGISTER_URL>  Install-config endpoint (default: production)"
+    echo "  -i                 Ignore hardware requirements check (for small VMs)"
+    echo "  --no-indexer       Install only Wazuh Manager (no Indexer/Dashboard, ~500MB RAM)"
     echo "  -h                 Show this help"
     echo ""
     echo "Example:"
     echo "  sudo bash $0 -k aisac_xxxxxxxxxxxx -t eyJhbG..."
-    echo "  sudo bash $0 -k aisac_xxxxxxxxxxxx -t eyJhbG... -u https://xyz.supabase.co/functions/v1/install-config"
+    echo "  sudo bash $0 -k aisac_xxxxxxxxxxxx -t eyJhbG... --no-indexer -i"
 }
 
 # ─── JSON helper ───
@@ -137,6 +139,7 @@ install_wazuh_manager() {
     curl -sO "https://packages.wazuh.com/${WAZUH_VERSION}/wazuh-install.sh"
     curl -sO "https://packages.wazuh.com/${WAZUH_VERSION}/config.yml"
 
+    # Generate config.yml and certificates tar (needed by all modes)
     log_info "Configuring Wazuh with IP: ${PRIVATE_IP}"
     cat > /tmp/config.yml << EOCFG
 nodes:
@@ -153,20 +156,36 @@ nodes:
       ip: "${PRIVATE_IP}"
 EOCFG
 
-    log_info "Generating Wazuh config files..."
-    bash /tmp/wazuh-install.sh -g 2>&1 | tail -5
+    if [ -f /tmp/wazuh-install-files.tar ]; then
+        log_info "Wazuh config files already exist, reusing them"
+    else
+        log_info "Generating Wazuh config files..."
+        bash /tmp/wazuh-install.sh -g 2>&1 | tail -5
+    fi
 
-    log_info "Installing Wazuh Indexer..."
-    bash /tmp/wazuh-install.sh --wazuh-indexer wazuh-indexer 2>&1 | tail -5
+    if [ "$NO_INDEXER" = true ]; then
+        # Lightweight mode: only Wazuh Manager (no Indexer/Dashboard)
+        log_info "Installing Wazuh Manager only (no Indexer/Dashboard)..."
+        bash /tmp/wazuh-install.sh --wazuh-server "${WAZUH_SERVER_NAME}" ${IGNORE_REQUIREMENTS} -o 2>&1 | tail -10
 
-    log_info "Starting Wazuh cluster..."
-    bash /tmp/wazuh-install.sh --start-cluster 2>&1 | tail -5
+        # Disable indexer-connector warnings (no indexer to connect to)
+        if [ -f /var/ossec/etc/ossec.conf ]; then
+            sed -i 's|<enabled>yes</enabled>\(.*indexer\)|<enabled>no</enabled>\1|' /var/ossec/etc/ossec.conf 2>/dev/null || true
+        fi
+    else
+        # Full mode: Indexer + Server + Dashboard
+        log_info "Installing Wazuh Indexer..."
+        bash /tmp/wazuh-install.sh --wazuh-indexer wazuh-indexer ${IGNORE_REQUIREMENTS} 2>&1 | tail -5
 
-    log_info "Installing Wazuh Server..."
-    bash /tmp/wazuh-install.sh --wazuh-server "${WAZUH_SERVER_NAME}" 2>&1 | tail -5
+        log_info "Starting Wazuh cluster..."
+        bash /tmp/wazuh-install.sh --start-cluster ${IGNORE_REQUIREMENTS} 2>&1 | tail -5
 
-    log_info "Installing Wazuh Dashboard..."
-    bash /tmp/wazuh-install.sh --wazuh-dashboard wazuh-dashboard 2>&1 | tail -5
+        log_info "Installing Wazuh Server..."
+        bash /tmp/wazuh-install.sh --wazuh-server "${WAZUH_SERVER_NAME}" ${IGNORE_REQUIREMENTS} 2>&1 | tail -5
+
+        log_info "Installing Wazuh Dashboard..."
+        bash /tmp/wazuh-install.sh --wazuh-dashboard wazuh-dashboard ${IGNORE_REQUIREMENTS} 2>&1 | tail -5
+    fi
 
     # Verify
     if [ ! -f /var/ossec/logs/alerts/alerts.json ]; then
@@ -458,12 +477,16 @@ EOF
 
 main() {
     local API_KEY="" AUTH_TOKEN="" REGISTER_URL="$DEFAULT_REGISTER_URL"
+    IGNORE_REQUIREMENTS=""
+    NO_INDEXER=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -k) API_KEY="$2"; shift 2 ;;
             -t) AUTH_TOKEN="$2"; shift 2 ;;
             -u) REGISTER_URL="$2"; shift 2 ;;
+            -i) IGNORE_REQUIREMENTS="-i"; shift ;;
+            --no-indexer) NO_INDEXER=true; shift ;;
             -h|--help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
         esac

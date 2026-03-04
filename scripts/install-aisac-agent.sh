@@ -86,6 +86,8 @@ load_register_config() {
     HEARTBEAT_URL=$(json_get_file "$REGISTER_OUTPUT" ".aisac.heartbeat_url")
     INGEST_URL=$(json_get_file "$REGISTER_OUTPUT" ".aisac.ingest_url")
     TENANT_ID=$(json_get_file "$REGISTER_OUTPUT" ".tenant_id")
+    WAZUH_AGENT_NAME=$(json_get_file "$REGISTER_OUTPUT" ".wazuh.agent_name")
+    WAZUH_AGENT_ID=$(json_get_file "$REGISTER_OUTPUT" ".wazuh.agent_id")
 
     if [ -z "$API_KEY" ] || [ -z "$ASSET_ID" ]; then
         log_error "Missing api_key or asset_id in ${REGISTER_OUTPUT}"
@@ -478,6 +480,7 @@ register_agent() {
     local register_url="$4"
     local cs_api_token="${5:-}"
     local cs_url="${6:-}"
+    local auth_token="${7:-}"
 
     log_info "Registering agent with AISAC platform..."
 
@@ -517,6 +520,19 @@ CSEOF
 )
     fi
 
+    # Build integration_config with Wazuh agent mapping
+    local integration_config=""
+    if [ -n "$WAZUH_AGENT_NAME" ]; then
+        integration_config=$(cat <<ICEOF
+,
+    "integration_config": {
+        "wazuh_agent_name": "${WAZUH_AGENT_NAME}",
+        "wazuh_agent_id": "${WAZUH_AGENT_ID:-}"
+    }
+ICEOF
+)
+    fi
+
     local payload=$(cat <<EOF
 {
     "event": "agent_registered",
@@ -531,7 +547,7 @@ CSEOF
         "ip_address": "${ip_address}",
         "version": "1.0.5",
         "capabilities": ${capabilities}
-    }${cs_fields}
+    }${cs_fields}${integration_config}
 }
 EOF
 )
@@ -540,17 +556,38 @@ EOF
 
     local response="" http_code=""
 
+    # Build auth headers: X-API-Key for the function + Authorization for Supabase gateway
+    local auth_header=""
+    if [ -n "$auth_token" ]; then
+        auth_header="-H \"Authorization: Bearer ${auth_token}\""
+    fi
+
     if command -v curl &>/dev/null; then
-        response=$(curl -s -w "\n%{http_code}" -X POST "${register_url}" \
-            -H "Content-Type: application/json" \
-            -H "X-API-Key: ${api_key}" \
-            -d "${payload}" 2>/dev/null)
+        if [ -n "$auth_token" ]; then
+            response=$(curl -s -w "\n%{http_code}" -X POST "${register_url}" \
+                -H "Content-Type: application/json" \
+                -H "X-API-Key: ${api_key}" \
+                -H "Authorization: Bearer ${auth_token}" \
+                -d "${payload}" 2>/dev/null)
+        else
+            response=$(curl -s -w "\n%{http_code}" -X POST "${register_url}" \
+                -H "Content-Type: application/json" \
+                -H "X-API-Key: ${api_key}" \
+                -d "${payload}" 2>/dev/null)
+        fi
         http_code=$(echo "$response" | tail -n1)
         response=$(echo "$response" | sed '$d')
     elif command -v wget &>/dev/null; then
-        response=$(wget -q -O - --header="Content-Type: application/json" \
-            --header="X-API-Key: ${api_key}" \
-            --post-data="${payload}" "${register_url}" 2>/dev/null)
+        if [ -n "$auth_token" ]; then
+            response=$(wget -q -O - --header="Content-Type: application/json" \
+                --header="X-API-Key: ${api_key}" \
+                --header="Authorization: Bearer ${auth_token}" \
+                --post-data="${payload}" "${register_url}" 2>/dev/null)
+        else
+            response=$(wget -q -O - --header="Content-Type: application/json" \
+                --header="X-API-Key: ${api_key}" \
+                --post-data="${payload}" "${register_url}" 2>/dev/null)
+        fi
         if [ $? -eq 0 ]; then
             http_code="200"
         else
@@ -981,9 +1018,9 @@ main() {
     local register_url
     register_url="$(echo "$HEARTBEAT_URL" | sed -E 's|/functions/v1/.*||')/functions/v1/agent-webhook"
     if [ -n "$SERVER_API_TOKEN" ] && [ -n "$PUBLIC_SERVER_URL" ]; then
-        register_agent "$AGENT_ID" "$API_KEY" "$ASSET_ID" "$register_url" "$SERVER_API_TOKEN" "$PUBLIC_SERVER_URL"
+        register_agent "$AGENT_ID" "$API_KEY" "$ASSET_ID" "$register_url" "$SERVER_API_TOKEN" "$PUBLIC_SERVER_URL" "$AUTH_TOKEN"
     else
-        register_agent "$AGENT_ID" "$API_KEY" "$ASSET_ID" "$register_url"
+        register_agent "$AGENT_ID" "$API_KEY" "$ASSET_ID" "$register_url" "" "" "$AUTH_TOKEN"
     fi
 
     # Summary
