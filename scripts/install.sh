@@ -65,7 +65,7 @@ print_banner() {
     echo "║                                                               ║"
     echo "║              AISAC Installer v2.0                             ║"
     echo "║                                                               ║"
-    echo "║   Installs: Wazuh Agent + AISAC Agent                        ║"
+    echo "║   Installs: Wazuh Agent + AISAC Agent                         ║"
     echo "║                                                               ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"

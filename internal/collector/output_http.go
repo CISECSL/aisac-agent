@@ -197,21 +197,25 @@ func (o *HTTPOutput) preparePayload(events []*LogEvent) ([]byte, error) {
 }
 
 // marshalEvent serializes a LogEvent for the ingest API.
-// For Wazuh alerts, it sends the raw alert JSON prefixed with "wazuh: " so that
-// syslog-ingest detects the source as Wazuh and uses normalizeWazuhAlert for
-// proper severity mapping (Wazuh level 0-15 → AISAC severity).
-// The raw JSON preserves "agent.name" at the top level for asset routing.
-// For other event types, it serializes the LogEvent struct as-is.
+// It sends the raw log line so syslog-ingest can parse each format natively:
+//   - Wazuh alerts: prefixed with "wazuh: " so parseSyslogMessage detects the
+//     source and tryExtractWazuhData extracts rule.id/rule.level for severity.
+//   - Syslog: the raw RFC3164/5424 line so parseSyslogMessage parses it correctly.
+//   - Other sources with raw data: sent as-is.
+//
+// Only falls back to JSON-serializing the LogEvent struct when Raw is empty.
 func (o *HTTPOutput) marshalEvent(event *LogEvent) (string, error) {
 	if event.Source == "wazuh_alerts" && event.Raw != "" {
-		// Prefix with "wazuh:" so syslog-ingest detects the source correctly.
-		// syslog-ingest's parseSyslogMessage checks rawMessage.includes('wazuh:')
-		// and then tryExtractWazuhData Pattern 4 parses the embedded JSON to
-		// extract rule.id, rule.level for proper severity mapping.
 		return "wazuh: " + event.Raw, nil
 	}
 
-	// Default: serialize the LogEvent struct
+	// For syslog and other sources, send the raw line directly so
+	// syslog-ingest can parse the native format (RFC3164, JSON, etc.)
+	if event.Raw != "" {
+		return event.Raw, nil
+	}
+
+	// Fallback: serialize the LogEvent struct (should rarely happen)
 	b, err := json.Marshal(event)
 	if err != nil {
 		return "", err
