@@ -39,13 +39,15 @@ Opcionalmente, con el flag `--soar` / `-Soar`, tambien instala:
   │         Endpoint (este equipo)   │
   │                                  │
   │  Wazuh Agent ──────────────────────> Wazuh Manager (1514/1515)
-  │                                  │
+  │                                  │        │
   │  AISAC Agent ──────────────────────> Plataforma AISAC (HTTPS 443)
-  │    - Heartbeat (estado)          │
-  │    - Collector (logs locales)    │
-  │    - SOAR (acciones, opcional)   │
-  └──────────────────────────────────┘
+  │    - Heartbeat (estado)          │        │
+  │    - Collector (logs locales)    │        v
+  │    - SOAR (acciones, opcional)   │  AISAC Collector (en Manager)
+  └──────────────────────────────────┘    - alerts.json ──> Plataforma AISAC
 ```
+
+> **Nota**: Las alertas de seguridad de Wazuh (SSH brute force, sudo, etc.) las genera el **Manager** en `alerts.json`. El AISAC Collector que corre en el Manager es el que las envia a la plataforma AISAC. El AISAC Agent del endpoint envia heartbeat y logs locales (syslog, Suricata).
 
 ---
 
@@ -80,9 +82,11 @@ Opcionalmente, con el flag `--soar` / `-Soar`, tambien instala:
 
 | Destino | Puerto | Uso |
 |---------|--------|-----|
-| Wazuh Manager | 1514/TCP | Comunicacion del agente Wazuh |
+| Wazuh Manager | 1514/TCP+UDP | Comunicacion del agente Wazuh |
 | Wazuh Manager | 1515/TCP | Registro del agente Wazuh |
 | `api.aisac.cisec.es` | 443/TCP | Plataforma AISAC (heartbeat + logs) |
+
+> **Importante**: Los puertos 1514 (TCP y UDP) y 1515 (TCP) deben estar abiertos en el firewall/security group del **Manager**, no del endpoint.
 
 ---
 
@@ -409,6 +413,7 @@ El instalador busca automaticamente las siguientes fuentes y habilita el collect
 
 > Si no se detecta ninguna fuente, el collector queda deshabilitado. Se puede habilitar manualmente editando `agent.yaml`.
 
+
 ---
 
 ## 9. Desinstalacion
@@ -442,19 +447,28 @@ sudo systemctl disable aisac-agent aisac-server
 sudo systemctl stop wazuh-agent
 sudo systemctl disable wazuh-agent
 
-# Eliminar AISAC
+# Eliminar servicios AISAC
 sudo rm -f /etc/systemd/system/aisac-agent.service
 sudo rm -f /etc/systemd/system/aisac-server.service
+sudo systemctl daemon-reload
+
+# Eliminar archivos AISAC
 sudo rm -rf /opt/aisac /etc/aisac /var/lib/aisac /var/log/aisac
 sudo rm -f /usr/local/bin/aisac-agent /usr/local/bin/aisac-server
 
 # Eliminar Wazuh Agent
-sudo dpkg --purge wazuh-agent    # Debian/Ubuntu
+sudo apt remove --purge wazuh-agent -y    # Debian/Ubuntu
 # o
-sudo rpm -e wazuh-agent          # CentOS/RHEL
-
-sudo systemctl daemon-reload
+sudo yum remove wazuh-agent -y            # CentOS/RHEL
+sudo rm -rf /var/ossec
 ```
+
+> **Nota**: Si el agente estaba registrado en el Manager, tambien hay que eliminarlo alli:
+> ```bash
+> # En el Manager
+> sudo /var/ossec/bin/manage_agents -r <AGENT_ID>
+> sudo systemctl restart wazuh-manager
+> ```
 
 **Windows:**
 
@@ -509,18 +523,51 @@ sudo ./install.sh -k <API_KEY> -t <AUTH_TOKEN> -m <MANAGER_IP>
 ### Wazuh Agent no conecta al Manager
 
 ```bash
-# Linux
-sudo tail -30 /var/ossec/logs/ossec.log
+# Linux - ver logs de conexion
+sudo grep -i "agentd\|error\|unable\|connect" /var/ossec/logs/ossec.log | tail -20
+
+# Verificar que tiene clave de registro
+sudo cat /var/ossec/etc/client.keys
+
+# Verificar conectividad al Manager
+nc -zv <MANAGER_IP> 1514 -w 3
 ```
 
 **Causas posibles**:
 - La IP del Manager (`-m`) es incorrecta
-- Los puertos 1514/1515 no estan abiertos en el firewall del Manager
+- Los puertos 1514 (TCP **y** UDP) y 1515 (TCP) no estan abiertos en el firewall del Manager
 - El Manager no esta activo
+- `client.keys` esta vacio (registro fallido)
 
 **Solucion**:
-1. Verificar que la IP del Manager es accesible: `telnet <MANAGER_IP> 1514`
-2. Pedir al administrador que abra los puertos 1514/1515 en el firewall del Manager
+1. Verificar que la IP del Manager es accesible: `nc -zv <MANAGER_IP> 1514 -w 3`
+2. Asegurar que los puertos 1514 (TCP+UDP) y 1515 (TCP) estan abiertos en el security group del Manager
+3. Si `client.keys` esta vacio, verificar que el puerto 1515 esta accesible y reinstalar el Wazuh Agent
+
+### Wazuh Agent "Never connected" en el Manager
+
+El agente se registro (tiene ID asignado) pero nunca establecio comunicacion.
+
+```bash
+# En el Manager
+sudo /var/ossec/bin/agent_control -l
+# ID: 001, Name: agent-name, IP: any, Never connected
+```
+
+**Causa mas comun**: Puerto **1514 UDP** no abierto en el firewall del Manager. El registro usa TCP 1515, pero la comunicacion de datos requiere TCP y UDP 1514.
+
+**Solucion**:
+1. Abrir TCP y UDP 1514 en el security group / firewall del Manager
+2. Si persiste, eliminar el agente del Manager y reinstalar en el endpoint:
+
+```bash
+# En el Manager
+sudo /var/ossec/bin/manage_agents -r <AGENT_ID>
+sudo systemctl restart wazuh-manager
+
+# En el endpoint
+sudo systemctl restart wazuh-agent
+```
 
 ### Heartbeat devuelve 401
 

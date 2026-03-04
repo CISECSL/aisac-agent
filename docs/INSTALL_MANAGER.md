@@ -72,7 +72,7 @@ El script `install-manager.sh` instala y configura automaticamente:
 
 | Puerto | Protocolo | Direccion | Uso |
 |--------|-----------|-----------|-----|
-| 1514 | TCP | Entrada | Comunicacion agentes Wazuh |
+| 1514 | TCP/UDP | Entrada | Comunicacion agentes Wazuh |
 | 1515 | TCP | Entrada | Registro de agentes Wazuh |
 | 443 | TCP | Entrada | Dashboard Wazuh (HTTPS) |
 | 443 | TCP | Salida | Plataforma AISAC (heartbeat + logs) |
@@ -126,7 +126,22 @@ sudo bash install-manager.sh \
 | `-k <API_KEY>` | Si | API Key del asset en la plataforma AISAC |
 | `-t <AUTH_TOKEN>` | Si | Token JWT para autenticacion con el gateway |
 | `-u <URL>` | No | URL del endpoint install-config (por defecto: produccion) |
+| `-i` | No | Ignorar requisitos minimos de hardware (para VMs pequenas) |
+| `--no-indexer` | No | Instalar solo Wazuh Manager sin Indexer ni Dashboard (~500 MB RAM) |
 | `-h` | No | Mostrar ayuda |
+
+### Instalacion ligera (sin Indexer ni Dashboard)
+
+Para servidores con recursos limitados (1 vCPU, 1-2 GB RAM):
+
+```bash
+sudo bash install-manager.sh \
+  -k aisac_abc123def456 \
+  -t eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... \
+  --no-indexer -i
+```
+
+Esto instala solo el Wazuh Manager + AISAC Collector, sin el Indexer ni el Dashboard.
 
 ### Que hace el instalador
 
@@ -141,6 +156,7 @@ El proceso se ejecuta en 5 pasos automaticos:
 ```
 
 > **Nota**: Si el Wazuh Manager ya esta instalado en el servidor, el paso 2 se omite automaticamente.
+> Con `--no-indexer`, los pasos de Indexer y Dashboard se omiten.
 
 ### Estructura de directorios resultante
 
@@ -237,12 +253,16 @@ grep -i "sent\|batch\|events" /var/log/aisac/agent.log | tail -10
 1. Ir a EC2 > Security Groups > seleccionar el grupo del Manager
 2. Agregar reglas de entrada:
    - **Puerto 1514 TCP** - Desde las IPs/subnets de los agentes
-   - **Puerto 1515 TCP** - Desde las IPs/subnets de los agentes
+   - **Puerto 1514 UDP** - Desde las IPs/subnets de los agentes
+   - **Puerto 1515 TCP** - Desde las IPs/subnets de los agentes (registro)
+
+> **Importante**: Si solo se abre TCP sin UDP en el puerto 1514, algunos agentes pueden registrarse correctamente pero aparecer como "Never connected".
 
 #### iptables
 
 ```bash
 sudo iptables -A INPUT -p tcp --dport 1514 -j ACCEPT
+sudo iptables -A INPUT -p udp --dport 1514 -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 1515 -j ACCEPT
 sudo iptables-save
 ```
@@ -250,7 +270,7 @@ sudo iptables-save
 #### UFW (Ubuntu)
 
 ```bash
-sudo ufw allow 1514/tcp
+sudo ufw allow 1514
 sudo ufw allow 1515/tcp
 ```
 
@@ -281,6 +301,19 @@ Los agentes necesitan la IP del Manager para conectarse. Usar:
 /var/ossec/bin/agent_groups -l
 ```
 
+### Eliminar un agente registrado
+
+```bash
+# Listar agentes
+sudo /var/ossec/bin/manage_agents -l
+
+# Eliminar agente por ID
+sudo /var/ossec/bin/manage_agents -r <AGENT_ID>
+
+# Reiniciar para aplicar
+sudo systemctl restart wazuh-manager
+```
+
 ### Reiniciar servicios
 
 ```bash
@@ -296,6 +329,26 @@ sudo systemctl restart aisac-agent
 ```bash
 cat /etc/aisac/agent.yaml
 ```
+
+### Mantenimiento de disco
+
+El Wazuh Manager puede acumular datos que llenen el disco. Directorios a vigilar:
+
+| Directorio | Descripcion | Accion |
+|------------|-------------|--------|
+| `/var/ossec/tmp/` | Archivos temporales | Se puede limpiar con el Manager parado |
+| `/var/ossec/queue/vd/` | Base de datos de vulnerabilidades | Deshabilitar vulnerability detection si no se usa |
+| `/var/ossec/queue/indexer/` | Cola del indexer | Se puede limpiar si no se usa el Indexer |
+
+Para limpiar:
+
+```bash
+sudo systemctl stop wazuh-manager
+sudo rm -rf /var/ossec/tmp/* /var/ossec/queue/vd/* /var/ossec/queue/indexer/*
+sudo systemctl start wazuh-manager
+```
+
+> **Importante**: Siempre parar el servicio antes de limpiar, o los archivos abiertos no liberaran espacio.
 
 ---
 
@@ -342,16 +395,55 @@ grep -i "401\|unauthorized" /var/log/aisac/agent.log
 
 ```bash
 # Ver logs del Manager
-tail -f /var/ossec/logs/ossec.log
+sudo tail -f /var/ossec/logs/ossec.log
 
 # Verificar que los puertos estan abiertos
 ss -tlnp | grep -E '1514|1515'
+
+# Ver estado de los agentes
+sudo /var/ossec/bin/agent_control -l
 ```
 
 **Causas posibles**:
-- Puertos 1514/1515 no abiertos en el firewall o security group
+- Puertos 1514 (TCP/UDP) y 1515 (TCP) no abiertos en el firewall o security group
 - El agente usa una IP incorrecta del Manager
 - El grupo del agente no existe en el Manager
+
+### Agente aparece como "Never connected"
+
+```bash
+sudo /var/ossec/bin/agent_control -l
+# ID: 001, Name: agent-name, IP: any, Never connected
+```
+
+El agente se registra (puerto 1515) pero no comunica (puerto 1514).
+
+**Causas posibles**:
+- Puerto **1514 UDP** no abierto en el firewall del Manager (se suele olvidar, solo se abre TCP)
+- Conectividad de red entre agente y Manager bloqueada
+
+**Solucion**:
+1. Abrir TCP **y** UDP 1514 en el security group / firewall del Manager
+2. Si persiste, eliminar y re-registrar el agente:
+
+```bash
+# En el Manager: eliminar agente
+sudo /var/ossec/bin/manage_agents -r <AGENT_ID>
+sudo systemctl restart wazuh-manager
+
+# En el asset: reinstalar/reiniciar Wazuh Agent
+sudo systemctl restart wazuh-agent
+```
+
+### Disco lleno en el Manager
+
+```bash
+df -h /
+```
+
+**Causa**: Wazuh Manager acumula datos en `/var/ossec/tmp/`, `/var/ossec/queue/vd/` y `/var/ossec/queue/indexer/`.
+
+**Solucion**: Ver la seccion [Mantenimiento de disco](#mantenimiento-de-disco) en Administracion del Manager.
 
 ### Dashboard no accesible
 
